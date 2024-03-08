@@ -1,12 +1,11 @@
 from abc import ABC, abstractmethod
-from typing import NamedTuple, Literal, Union
+from typing import NamedTuple, Union
 
 import torch
 from openai import OpenAI
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
-    GenerationConfig,
     BitsAndBytesConfig,
 )
 
@@ -24,6 +23,17 @@ class AdjustPrompt(NamedTuple):
 
 
 def build_prompt(prompt_object: Union[GenerationPrompt, AdjustPrompt]) -> str:
+    """Builds a string user prompt from the provided prompt object. Infers Prompt type.
+
+    Parameters
+    ----------
+    prompt_object: Union[GenerationPrompt, AdjustPrompt]
+        Prompt NamedTuple subclass
+
+    Returns
+    -------
+    user_prompt: str
+    """
     if isinstance(prompt_object, GenerationPrompt):
         return (
             f"Language:\n{prompt_object.language}\n"
@@ -47,27 +57,48 @@ def build_prompt(prompt_object: Union[GenerationPrompt, AdjustPrompt]) -> str:
 class LLMBackend(ABC):
     """Base class for LLM backend. Contains only interface."""
 
+    # For the possibility of code interpretation
     supported_languages = [
         "python",
         "java",
         "c++",
         "c",
         "scala",
-        "node",
-        "javascript",
-        "typescript",
-        "SQL",
-        "MySQL",
-        "PostgreSQL",
+        "sql",
+        "mysql",
+        "postgresql",
     ]
 
     def generate_code(self, prompt_object: GenerationPrompt) -> str:
+        """Generates a new piece of code snippet given a prompt.
+
+        Parameters
+        ----------
+        prompt_object: GenerationPrompt
+            Input prompt based on which to generate the code snippet.
+
+        Returns
+        -------
+        generated_code: str
+        """
         if prompt_object.language.lower() not in self.supported_languages:
             raise ValueError(f"Unsupported language {prompt_object.language}")
         user_prompt = build_prompt(prompt_object)
         return self.call_backend(user_prompt, self.generate_system_prompt)
 
     def adjust_code(self, prompt_object: AdjustPrompt) -> str:
+        """Generates a code snippet given an original prompt, a previous code snippet and user feedback on the previous
+        code snippet.
+
+        Parameters
+        ----------
+        prompt_object: AdjustPrompt
+            Input prompt based on which to generate the code snippet.
+
+        Returns
+        -------
+        generated_code: str
+        """
         if prompt_object.language.lower() not in self.supported_languages:
             raise ValueError(f"Unsupported language {prompt_object.language}")
         user_prompt = build_prompt(prompt_object)
@@ -75,7 +106,20 @@ class LLMBackend(ABC):
         return self.call_backend(user_prompt, self.adjust_system_prompt)
 
     @abstractmethod
-    def call_backend(self, prompt: str, system_prompt: str) -> str:
+    def call_backend(self, user_prompt: str, system_prompt: str) -> str:
+        """Calls the backend method specific to a subclass.
+
+        Parameters
+        ----------
+        user_prompt: str
+            User-provided part of the prompt.
+        system_prompt: str
+            System message part of the prompt, provided most likely by this class' properties.
+
+        Returns
+        -------
+        generated_code: str
+        """
         raise NotImplementedError()
 
     @property
@@ -129,7 +173,7 @@ class OpenAIBackend(LLMBackend):
 class HuggingfaceBackend(LLMBackend):
     def __init__(self, model_name: str, load_in_4bit=False):
         """Class wrapping Huggingface transformers LLM backend. Will use device automapping. Contains a factory for
-        instantiating specific model classes.
+        instantiating specific model classes - `load_backend`. Don't use this constructor directly.
 
         Parameters
         ----------
@@ -149,10 +193,12 @@ class HuggingfaceBackend(LLMBackend):
 
     @abstractmethod
     def encode_prompt(self, user_prompt: str, system_prompt: str) -> torch.Tensor:
+        """Model-specific prompt encoder."""
         raise NotImplementedError()
 
     @abstractmethod
     def decode_output(self, output_tokens: torch.Tensor) -> str:
+        """Model-specific output decoder."""
         raise NotImplementedError()
 
     def call_backend(self, user_prompt: str, system_prompt: str) -> str:
@@ -161,10 +207,21 @@ class HuggingfaceBackend(LLMBackend):
         string_output = self.decode_output(outputs)
         return string_output
 
-    @classmethod
-    def load_backend(
-        cls, model_name: str, load_in_4bit=False
-    ) -> "HuggingfaceBackend":
+    @staticmethod
+    def load_backend(model_name: str, load_in_4bit=False) -> "HuggingfaceBackend":
+        """Factory method that instantiates and returns a subclass depending on the value passed to `model_name`.
+
+        Parameters
+        ----------
+        model_name: str
+            Name on huggingface modelhub or path to the saved model.
+        load_in_4bit: bool, optional
+            Whether to load the model quantized in 4 bit. Uses float16 compute type. Default: False
+
+        Returns
+        -------
+        backend_class: HuggingfaceBackend
+        """
         if "hermes" in model_name.lower():
             return HermesBackend(model_name, load_in_4bit=load_in_4bit)
         else:
