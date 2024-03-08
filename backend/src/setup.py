@@ -10,5 +10,9 @@ setup(
         "uvicorn[standard]",
         "torch",
         "transformers",
+        "accelerate",
+        "protobuf",
+        "bitsandbytes>=0.39.0",
+        "sentencepiece"
     ],
 )

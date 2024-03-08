@@ -22,8 +22,7 @@ def main(
         )
         result = backend.generate_code(prompt_object)
     else:
-        # code = code.replace('\\\\', '\\')  # Fix double escaping from shell
-        code = code.encode().decode('unicode_escape')
+        code = code.encode().decode('unicode_escape')  # Fix double escaping from shell
         prompt_object = AdjustPrompt(
             language=language,
             original_prompt=prompt,
