@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools >= 69.1.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codegen_backend"
+version = "0.0.1"
+requires-python = ">=3.10"
+dependencies = [
+    "openai",
+    "fastapi",
+    "uvicorn[standard]",
+    "torch",
+    "transformers",
+    "accelerate",
+    "protobuf",
+    "bitsandbytes>=0.39.0",
+    "sentencepiece"
+]

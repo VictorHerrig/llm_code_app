@@ -2,12 +2,14 @@ from abc import ABC, abstractmethod
 from typing import NamedTuple, Union
 
 import torch
+import yaml
 from openai import OpenAI
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    BitsAndBytesConfig,
-)
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+
+
+# ------------------------------- #
+# --------- Data models --------- #
+# ------------------------------- #
 
 
 class GenerationPrompt(NamedTuple):
@@ -20,6 +22,54 @@ class AdjustPrompt(NamedTuple):
     original_prompt: str
     reference_code: str
     feedback_prompt: str
+
+
+# ------------------------------- #
+# ------- Backend manager ------- #
+# ------------------------------- #
+
+
+class BackendManager:
+    backends = dict()
+
+    def __init__(self, config_path: str):
+        """Simple manager for keeping track of and spinning up backends
+
+        Parameters
+        ----------
+        config_path: str
+            Path to yaml configuration file of form:
+            `load_in_4bit`: bool
+        """
+        with open(config_path, "r") as f:
+            config = yaml.safe_load(f)
+        self.load_in_4bit = config.get("load_in_4bit", True)
+
+    def load_backend(self, model_name: str) -> "LLMBackend":
+        # If we've already loaded the backend
+        if model_name in self.backends:
+            return self.backends[model_name]
+        else:
+            try:
+                backend = OpenAIBackend(model_name)
+                self.backends[model_name] = backend
+                return backend
+            except ValueError:
+                try:
+                    backend = HuggingfaceBackend.load_backend(
+                        model_name, load_in_4bit=self.load_in_4bit
+                    )
+                    self.backends[model_name] = backend
+                    return backend
+                except ValueError as e:
+                    raise e
+                except torch.cuda.OutOfMemoryError as e:
+                    raise e
+
+
+# ------------------------------- #
+# ------ Module functions ------- #
+# ------------------------------- #
 
 
 def build_prompt(prompt_object: Union[GenerationPrompt, AdjustPrompt]) -> str:
@@ -50,8 +100,14 @@ def build_prompt(prompt_object: Union[GenerationPrompt, AdjustPrompt]) -> str:
         )
     else:
         raise ValueError(
-            f"Wrong type of prompt object, expected GeneratePrompt or AdjustPrompt, but got {type(prompt_object)}"
+            f"Wrong type of prompt object, expected GeneratePrompt or AdjustPrompt, "
+            f"but got {type(prompt_object)}"
         )
+
+
+# ------------------------------- #
+# --------- Base class ---------- #
+# ------------------------------- #
 
 
 class LLMBackend(ABC):
@@ -87,8 +143,8 @@ class LLMBackend(ABC):
         return self.call_backend(user_prompt, self.generate_system_prompt)
 
     def adjust_code(self, prompt_object: AdjustPrompt) -> str:
-        """Generates a code snippet given an original prompt, a previous code snippet and user feedback on the previous
-        code snippet.
+        """Generates a code snippet given an original prompt, a previous code snippet
+        and user feedback on the previous code snippet.
 
         Parameters
         ----------
@@ -102,7 +158,6 @@ class LLMBackend(ABC):
         if prompt_object.language.lower() not in self.supported_languages:
             raise ValueError(f"Unsupported language {prompt_object.language}")
         user_prompt = build_prompt(prompt_object)
-        print(user_prompt)
         return self.call_backend(user_prompt, self.adjust_system_prompt)
 
     @abstractmethod
@@ -114,7 +169,8 @@ class LLMBackend(ABC):
         user_prompt: str
             User-provided part of the prompt.
         system_prompt: str
-            System message part of the prompt, provided most likely by this class' properties.
+            System message part of the prompt, provided most likely by this class'
+            properties.
 
         Returns
         -------
@@ -125,23 +181,32 @@ class LLMBackend(ABC):
     @property
     def generate_system_prompt(self):
         return (
-            "You are a helpful assistant that generates code to perform the requested  task in the requested "
-            "programming language. Return only properly formatted code as succinct as possible while still completing "
-            "the task. If the task is unclear, impossible, asks for anything other than a code snippet, or if you "
-            "don't know the correct answer, return a message starting with 'ERROR:', followed by a brief explanation "
-            "of why you cannot perform the task."
+            "You are a helpful assistant that generates code to perform the requested "
+            "task in the requested programming language. Return only properly "
+            "formatted code as succinct as possible while still completing the task. "
+            "If the task is unclear, impossible, asks for anything other than a code "
+            "snippet, or if you don't know the correct answer, return a message "
+            "starting with 'ERROR:', followed by a brief explanation of why you cannot "
+            "perform the task."
         )
 
     @property
     def adjust_system_prompt(self):
         return (
-            "You are a helpful assistant that corrects code to perform the requested  task in the requested "
-            "programming language according to the user-provided feedback. Return only properly formatted code with "
-            "as few changes from the provided code as possible while still addressing the feedback. If the task, "
-            "feedback or provided code are unclear or impossible, the task asks for anything other than a code "
-            "snippet, or if you don't know the correct answer, return a message starting with 'ERROR:', followed by "
-            "a brief explanation of why you cannot perform the task."
+            "You are a helpful assistant that corrects code to perform the requested  "
+            "task in the requested programming language according to the user-provided "
+            "feedback. Return only properly formatted code with as few changes from "
+            "the provided code as possible while still addressing the feedback. If the "
+            "task, feedback or provided code are unclear or impossible, the task asks "
+            "for anything other than a code snippet, or if you don't know the correct "
+            "answer, return a message starting with 'ERROR:', followed by a brief "
+            "explanation of why you cannot perform the task."
         )
+
+
+# ------------------------------- #
+# ------- Implementations ------- #
+# ------------------------------- #
 
 
 class OpenAIBackend(LLMBackend):
@@ -151,10 +216,16 @@ class OpenAIBackend(LLMBackend):
         Parameters
         ----------
         model_name: str
-            Name of the OpenAI model. Check the API documentation for available models and their prices.
+            Name of the OpenAI model. Check the API documentation for available models
+            and their prices.
         """
-        self.client = OpenAI()
-        self.model_name = model_name
+        client = OpenAI()
+        available_models = [d["id"] for d in client.get("models", cast_to=list)["data"]]
+        if model_name in available_models:
+            self.client = client
+            self.model_name = model_name
+        else:
+            raise ValueError(f"Invalid OpenAI model name: {model_name}")
 
     def call_backend(self, user_prompt: str, system_prompt: str) -> str:
         response = self.client.chat.completions.create(
@@ -172,8 +243,9 @@ class OpenAIBackend(LLMBackend):
 
 class HuggingfaceBackend(LLMBackend):
     def __init__(self, model_name: str, load_in_4bit=False):
-        """Class wrapping Huggingface transformers LLM backend. Will use device automapping. Contains a factory for
-        instantiating specific model classes - `load_backend`. Don't use this constructor directly.
+        """Class wrapping Huggingface transformers LLM backend. Will use device
+        automapping. Contains a factory for instantiating specific model classes -
+        `load_backend`. Don't use this constructor directly.
 
         Parameters
         ----------
@@ -182,7 +254,7 @@ class HuggingfaceBackend(LLMBackend):
         """
         quant_config = BitsAndBytesConfig(
             load_in_4bit=load_in_4bit,
-            bnb_4bit_compute_dtype=torch.float16,  # I don't have a bfloat16 compatible device
+            bnb_4bit_compute_dtype=torch.float16,  # bfloat16 preferable if you can
             bnb_4bit_use_double_quant=True,
             device_map="auto",
         )
@@ -203,20 +275,23 @@ class HuggingfaceBackend(LLMBackend):
 
     def call_backend(self, user_prompt: str, system_prompt: str) -> str:
         message_tokens = self.encode_prompt(user_prompt, system_prompt)
+        message_tokens = message_tokens.to(self.model.device)
         outputs = self.model.generate(message_tokens, max_new_tokens=1000)
         string_output = self.decode_output(outputs)
         return string_output
 
     @staticmethod
     def load_backend(model_name: str, load_in_4bit=False) -> "HuggingfaceBackend":
-        """Factory method that instantiates and returns a subclass depending on the value passed to `model_name`.
+        """Factory method that instantiates and returns a subclass depending on the
+        value passed to `model_name`.
 
         Parameters
         ----------
         model_name: str
             Name on huggingface modelhub or path to the saved model.
         load_in_4bit: bool, optional
-            Whether to load the model quantized in 4 bit. Uses float16 compute type. Default: False
+            Whether to load the model quantized in 4 bit. Uses float16 compute type.
+            Default: False
 
         Returns
         -------
@@ -229,25 +304,26 @@ class HuggingfaceBackend(LLMBackend):
 
 
 class UnknownHuggingfaceBackend(HuggingfaceBackend):
-    """Fallback Huggingface backend class to use when the model type is unknown. This class will very likely not
-    format input and output correctly, and should be considered a true fallback."""
+    """Fallback Huggingface backend class to use when the model type is unknown. This
+    class will very likely not format input and output correctly, and should be
+    considered a true fallback.
+    """
 
     def encode_prompt(self, user_prompt: str, system_prompt: str) -> torch.Tensor:
-        combined_prompt = system_prompt + "\n"
+        combined_prompt = system_prompt + "\n" + user_prompt
         prompt_tokens = self.tokenizer.encode(combined_prompt)
         return prompt_tokens
 
     @abstractmethod
     def decode_output(self, output_tokens: torch.Tensor) -> str:
-        string_output = self.tokenizer.batch_decode(output_tokens)
-        last_message = string_output.split("<|im_start|>assistant")[-1]
-        last_message = last_message.split("<|im_end|>")[0]
-        return last_message
+        string_output = self.tokenizer.batch_decode(output_tokens)[0]
+        return string_output
 
 
 class HermesBackend(HuggingfaceBackend):
-    """Huggingface backend with encoding and decoding methods made specifically for the Hermes mistral-7B models
-    finetuned on both natural language and code."""
+    """Huggingface backend with encoding and decoding methods made specifically for the
+    Hermes mistral-7B models finetuned on both natural language and code.
+    """
 
     def encode_prompt(self, user_prompt: str, system_prompt: str) -> torch.Tensor:
         messages = [
@@ -270,20 +346,24 @@ class HermesBackend(HuggingfaceBackend):
     @property
     def generate_system_prompt(self):
         return (
-            "You are a helpful assistant that generates code to perform the requested  task in the requested "
-            "programming language. Return only properly formatted code as succinct as possible while still completing "
-            "the task without any explanation. If the task asks for anything other than a code snippet or if you "
-            "don't know the correct answer, return a message starting with 'ERROR:', followed by a brief explanation "
-            "of why you cannot perform the task."
+            "You are a helpful assistant that generates code to perform the requested "
+            "task in the requested programming language. Return only properly "
+            "formatted code as succinct as possible while still completing the task "
+            "without any explanation. If the task asks for anything other than a code "
+            "snippet or if you don't know the correct answer, return a message "
+            "starting with 'ERROR:', followed by a brief explanation of why you cannot "
+            "perform the task."
         )
 
     @property
     def adjust_system_prompt(self):
         return (
-            "You are a helpful assistant that corrects code to perform the requested  task in the requested "
-            "programming language according to the user-provided feedback. Return only properly formatted code with "
-            "as few changes from the provided code as possible while still addressing the feedback without any "
-            "explanation. If the task or feedback ask for anything other than a code snippet, or if you don't know the "
-            "correct answer, return a message starting with 'ERROR:', followed by a brief explanation of why you "
-            "cannot perform the task."
+            "You are a helpful assistant that corrects code to perform the requested "
+            "task in the requested programming language according to the user-provided "
+            "feedback. Return only properly formatted code with as few changes from "
+            "the provided code as possible while still addressing the feedback without "
+            "any explanation. If the task or feedback ask for anything other than a "
+            "code snippet, or if you don't know the correct answer, return a message "
+            "starting with 'ERROR:', followed by a brief explanation of why you cannot "
+            "perform the task."
         )
