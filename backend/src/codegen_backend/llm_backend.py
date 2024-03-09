@@ -316,7 +316,7 @@ class UnknownHuggingfaceBackend(HuggingfaceBackend):
 
     @abstractmethod
     def decode_output(self, output_tokens: torch.Tensor) -> str:
-        string_output = self.tokenizer.batch_decode(output_tokens)
+        string_output = self.tokenizer.batch_decode(output_tokens)[0]
         return string_output
 
 
