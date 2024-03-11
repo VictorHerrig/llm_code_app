@@ -116,13 +116,13 @@ class LLMBackend(ABC):
     # For the possibility of code interpretation
     supported_languages = [
         "python",
-        "java",
         "c++",
         "c",
+        "java",
         "scala",
         "sql",
-        "mysql",
-        "postgresql",
+        "javascript",
+        "bash"
     ]
 
     def generate_code(self, prompt_object: GenerationPrompt) -> str:

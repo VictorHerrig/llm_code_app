@@ -1,6 +1,8 @@
+import json
 from uuid import uuid4
 
-import asyncio
+import requests
+from requests.exceptions import HTTPError
 
 import reflex as rx
 
@@ -16,12 +18,11 @@ class State(rx.State):
         "Python": "python",
         "C++": "cpp",
         "C": "c",
-        "SQL": "sql",
         "Java": "java",
         "Scala": "scala",
-        "bash": "bash",
+        "SQL": "sql",
         "Javascript": "javascript",
-        "Typescript": "typescript",
+        "bash": "bash",
     }
     model_dict: dict[str, str] = {
         'GPT-3.5': 'gpt-3.5-turbo-0125',
@@ -29,6 +30,10 @@ class State(rx.State):
     }
     inv_lang_dict: dict[str, str] = {v: k for k, v in lang_dict.items()}
     inv_model_dict: dict[str, str] = {v: k for k, v in model_dict.items()}
+    backend_lang_dict: dict[str, str] = {
+        "cpp": "c++"
+    }
+
     language: str = None
 
     active_session: tuple[str, str, str, list[tuple[str, str, str, str, str, str, bool]]] = ()
@@ -42,6 +47,8 @@ class State(rx.State):
     errors: list[str] = []
     new_session_id: str = ''
     _loading: bool = False
+    _backend_generate_url: str = "http://backend:80/generate"
+    _backend_adjust_url: str = "http://backend:80/adjust"
 
     @rx.var
     def active_session_id(self) -> str:
@@ -88,28 +95,65 @@ class State(rx.State):
         else:
             return []
 
-    async def call_backend(self):
-        self._loading = True
+    def api_call(self):
+        # Fetch language and model name in backend-readable format
+        language = self.active_session[1]
+        model_name = self.active_session[2]
+        if language in self.backend_lang_dict:
+            language = self.backend_lang_dict[language]
+
+        if len(self.active_session[3]) == 0:
+            # Generation
+            payload = dict(
+                model_name=model_name,
+                language=language,
+                original_prompt=self.query
+            )
+            response = requests.post(self._backend_generate_url, json=payload)
+            if response.status_code == 200:
+                return json.loads(response.content.decode('utf-8'))['code_out']
+            else:
+                raise HTTPError(f"{response.status_code}: {response.content}")
+        else:
+            # Adjust previous code
+            first_query = self.active_session[3][-1][4]
+            last_answer = self.active_session[3][0][5]
+            payload = dict(
+                model_name=model_name,
+                language=language,
+                original_prompt=first_query,
+                reference_code=last_answer,
+                feedback_prompt=self.query
+            )
+            response = requests.post(self._backend_adjust_url, json=payload)
+            if response.status_code == 200:
+                return json.loads(response.content.decode('utf-8'))['code_out']
+            else:
+                raise HTTPError(f"{response.status_code}: {response.content}")
+
+    def submit(self):
         self.errors = []
         if self.query is None or len(self.query) < 5:
             self.errors.append("Please input a prompt of at least 5 character")
         if self.query is not None and len(self.query) > 200:
             self.errors.append("Please limit input a prompt length to 200 character")
         if len(self.errors) == 0:
-            await asyncio.sleep(1.)
-            answer = "ERROR: No more code left :("
-
-            turn = (
-                self.active_session[0],  # session_id
-                str(uuid4()),            # turn_id
-                self.active_session[1],  # language_id
-                self.active_session[2],  # model_id
-                self.query,              # query
-                answer,                  # answer
-                is_error(answer),        # answer_is_error
-            )
-            self.active_session[3].insert(0, turn)
-        self._loading = False
+            try:
+                answer = self.api_call()
+                if answer is None:
+                    self.errors.append("Backend error")
+                turn = (
+                    self.active_session[0],  # session_id
+                    str(uuid4()),            # turn_id
+                    self.active_session[1],  # language_id
+                    self.active_session[2],  # model_id
+                    self.query,              # query
+                    answer,                  # answer
+                    is_error(answer),        # answer_is_error
+                )
+                self.active_session[3].insert(0, turn)
+            except HTTPError as e:
+                self.errors.append(f"Backend error: {str(e)}")
 
     def new_session(self):
         self.errors = []

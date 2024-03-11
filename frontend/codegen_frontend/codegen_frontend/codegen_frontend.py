@@ -48,7 +48,7 @@ def query_input() -> rx.Component:
 
 
 def query_button() -> rx.Component:
-    return rx.chakra.button("Send", on_click=State.call_backend(), color_scheme="gray", is_loading=State.is_loading)
+    return rx.chakra.button("Send", on_click=State.submit(), color_scheme="gray", is_loading=State.is_loading)
 
 
 def action_bar() -> rx.Component:

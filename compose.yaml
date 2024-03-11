@@ -2,8 +2,21 @@ services:
   backend:
     image: codegen/backend
     build: ./backend
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+  frontend:
+    image: codegen/frontend
+    build: ./frontend
     ports:
-      - "8083:80"
+      - "8084:8084"
+      - "8082:8082"
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
     deploy:
