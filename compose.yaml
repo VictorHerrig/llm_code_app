@@ -17,12 +17,3 @@ services:
     ports:
       - "8084:8084"
       - "8082:8082"
-    environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]

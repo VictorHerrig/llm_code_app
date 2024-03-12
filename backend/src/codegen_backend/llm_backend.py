@@ -122,7 +122,7 @@ class LLMBackend(ABC):
         "scala",
         "sql",
         "javascript",
-        "bash"
+        "bash",
     ]
 
     def generate_code(self, prompt_object: GenerationPrompt) -> str:
