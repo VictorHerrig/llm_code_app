@@ -1,6 +1,7 @@
 from typing import Annotated
 
 from fastapi import FastAPI, Depends, HTTPException
+from openai import APIError
 from pydantic import BaseModel
 
 from .llm_backend import GenerationPrompt, AdjustPrompt, BackendManager, LLMBackend
@@ -59,6 +60,12 @@ def load_backend(manager: BackendManager, model_name: str) -> LLMBackend:
     """Loads the backend using the backend manager. Task-agnostic."""
     try:
         return manager.load_backend(model_name)
+    except APIError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"OpenAI API error, did you forget to set your OPENAI_API_KEY "
+                   f"evironment variable?",
+        )
     except:
         raise HTTPException(status_code=404, detail="Model name not found")
 

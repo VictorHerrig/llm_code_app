@@ -5,6 +5,11 @@
 Ensure you have the GPU container toolkit if you want to use a local LLM (see Docker
 compose section).
 
+Also make sure that your OpenAI API key is exported to the default location on your host
+machine: OPENAI_API_KEY. Alternatively, if you do not wish to do that, you can also
+directly enter the API key into the docker compose.yaml on line 6, replacing
+`${OPENAI_API_KEY}`.
+
 From the llm_code_app directory run:
 
 ```shell
